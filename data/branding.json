@@ -1,0 +1,42 @@
+{
+  "published": {
+    "studioBadge": {
+      "url": null,
+      "fit": "cover",
+      "scale": 100,
+      "shape": "circle",
+      "customBorder": true,
+      "visible": true
+    },
+    "headerBanner": {
+      "url": null,
+      "focalPointY": "center",
+      "overlayDarkness": 70,
+      "blur": 0,
+      "textPosition": "left",
+      "visible": true
+    },
+    "publishedAt": 1793218139901,
+    "publishedBy": "Cure Creative Studio",
+    "version": 1
+  },
+  "draft": {
+    "studioBadge": {
+      "url": null,
+      "fit": "cover",
+      "scale": 100,
+      "shape": "circle",
+      "customBorder": true,
+      "visible": true
+    },
+    "headerBanner": {
+      "url": null,
+      "focalPointY": "center",
+      "overlayDarkness": 70,
+      "blur": 0,
+      "textPosition": "left",
+      "visible": true
+    },
+    "updatedAt": 1793218139901
+  }
+}
