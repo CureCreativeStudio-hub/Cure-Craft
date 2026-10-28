@@ -1,0 +1,42 @@
+{
+  "published": {
+    "studioBadge": {
+      "url": null,
+      "fit": "cover",
+      "scale": 100,
+      "shape": "circle",
+      "customBorder": true,
+      "visible": true
+    },
+    "headerBanner": {
+      "url": "/uploads/banner-e0211b86d7040bde1cae06ca.jpg",
+      "focalPointY": "center",
+      "overlayDarkness": 87,
+      "blur": 0,
+      "textPosition": "left",
+      "visible": true
+    },
+    "publishedAt": 1793217627989,
+    "publishedBy": "Cure Creative Studio",
+    "version": 4
+  },
+  "draft": {
+    "studioBadge": {
+      "url": null,
+      "fit": "cover",
+      "scale": 100,
+      "shape": "circle",
+      "customBorder": true,
+      "visible": true
+    },
+    "headerBanner": {
+      "url": "/uploads/banner-e0211b86d7040bde1cae06ca.jpg",
+      "focalPointY": "center",
+      "overlayDarkness": 87,
+      "blur": 0,
+      "textPosition": "left",
+      "visible": true
+    },
+    "updatedAt": 1793217627983
+  }
+}

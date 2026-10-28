@@ -2,24 +2,25 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   Shield, 
   Lock, 
-  Key, 
   Upload, 
-  Check, 
   X, 
   AlertCircle, 
-  Sparkles, 
   ArrowLeft, 
-  RotateCcw, 
   Eye, 
   Smartphone, 
   Monitor, 
   LogOut, 
-  Image as ImageIcon,
-  CheckCircle2,
-  Trash2,
-  Sliders,
-  Layers,
-  Save
+  CheckCircle2, 
+  Save,
+  Cloud,
+  Database,
+  Server,
+  Copy,
+  Check,
+  ExternalLink,
+  Settings,
+  HelpCircle,
+  RefreshCw
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { 
@@ -33,11 +34,30 @@ import {
   publishBranding, 
   discardDraftBranding, 
   restoreDefaultBranding,
-  DraftBrandingResponse
+  fetchSystemDiagnostics,
+  DraftBrandingResponse,
+  SystemDiagnostics
 } from '../services/brandingService';
 import { Header } from '../components/Header';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { SiteBrandingConfig } from '../types/branding';
+
+const SQL_SCHEMA_SNIPPET = `-- Run in Supabase SQL Editor:
+CREATE TABLE IF NOT EXISTS curecraft_branding (
+  id TEXT PRIMARY KEY DEFAULT 'singleton',
+  published JSONB NOT NULL,
+  draft JSONB NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE curecraft_branding ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Public read access for branding"
+  ON curecraft_branding FOR SELECT TO public USING (true);
+
+CREATE POLICY "Service role full access"
+  ON curecraft_branding FOR ALL TO service_role USING (true) WITH CHECK (true);
+`;
 
 export const AdminBranding: React.FC = () => {
   const [token, setToken] = useState<string | null>(getStoredAdminToken());
@@ -51,7 +71,10 @@ export const AdminBranding: React.FC = () => {
 
   // Branding draft and publish data
   const [data, setData] = useState<DraftBrandingResponse | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [diagnostics, setDiagnostics] = useState<SystemDiagnostics | null>(null);
+  const [showDiagnosticsModal, setShowDiagnosticsModal] = useState<boolean>(false);
+  const [copySuccess, setCopySuccess] = useState<boolean>(false);
+  const [, setIsLoading] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // File upload state
@@ -82,6 +105,7 @@ export const AdminBranding: React.FC = () => {
           setIsAuthenticated(true);
           setToken(existingToken);
           loadDraft(existingToken);
+          loadDiagnostics(existingToken);
         } else {
           setStoredAdminToken(null);
           setToken(null);
@@ -106,6 +130,15 @@ export const AdminBranding: React.FC = () => {
     }
   };
 
+  const loadDiagnostics = async (authToken: string) => {
+    try {
+      const diag = await fetchSystemDiagnostics(authToken);
+      setDiagnostics(diag);
+    } catch {
+      // Diagnostic check is optional
+    }
+  };
+
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3500);
@@ -124,8 +157,9 @@ export const AdminBranding: React.FC = () => {
       setToken(res.token);
       setIsAuthenticated(true);
       loadDraft(res.token);
+      loadDiagnostics(res.token);
     } else {
-      setLoginError(res.error || 'Invalid password.');
+      setLoginError(res.error || 'Authentication failed. Please check credentials.');
     }
   };
 
@@ -135,8 +169,72 @@ export const AdminBranding: React.FC = () => {
     setIsAuthenticated(false);
   };
 
+  // Helper to optimize image size client-side if file is large (> 2MB)
+  // Ensures payload stays comfortably within Vercel Serverless Function 4.5MB limit
+  const optimizeImageIfNeeded = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      // If SVG or small file (< 2MB), keep original data URI directly
+      if (file.type === 'image/svg+xml' || file.size < 2 * 1024 * 1024) {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve(e.target?.result as string);
+        reader.onerror = () => reject(new Error('Failed to read file from disk.'));
+        reader.readAsDataURL(file);
+        return;
+      }
+
+      const img = new Image();
+      const objectUrl = URL.createObjectURL(file);
+      img.onload = () => {
+        URL.revokeObjectURL(objectUrl);
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+
+        // Max dimension constraints
+        const maxDim = 2560;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          // Fallback to raw reader
+          const reader = new FileReader();
+          reader.onload = (e) => resolve(e.target?.result as string);
+          reader.readAsDataURL(file);
+          return;
+        }
+
+        ctx.drawImage(img, 0, 0, width, height);
+
+        // Keep PNG format for PNGs (to preserve transparency), or WebP/JPEG
+        const outFormat = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
+        const dataUrl = canvas.toDataURL(outFormat, 0.92);
+        resolve(dataUrl);
+      };
+
+      img.onerror = () => {
+        URL.revokeObjectURL(objectUrl);
+        // Fallback to direct file reader
+        const reader = new FileReader();
+        reader.onload = (e) => resolve(e.target?.result as string);
+        reader.readAsDataURL(file);
+      };
+
+      img.src = objectUrl;
+    });
+  };
+
   // Upload Handler with validation
-  const handleFileUpload = (target: 'badge' | 'banner', e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (target: 'badge' | 'banner', e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !token) return;
 
@@ -144,7 +242,7 @@ export const AdminBranding: React.FC = () => {
 
     // Validate size (15MB)
     if (file.size > 15 * 1024 * 1024) {
-      setUploadError(`File is too large (${(file.size / (1024 * 1024)).toFixed(1)}MB). Limit is 15MB.`);
+      setUploadError(`File is too large (${(file.size / (1024 * 1024)).toFixed(1)}MB). Maximum allowed is 15MB.`);
       return;
     }
 
@@ -156,36 +254,35 @@ export const AdminBranding: React.FC = () => {
     }
 
     setUploadingTarget(target);
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      const fileData = event.target?.result as string;
-      try {
-        const res = await uploadBrandingAsset(token, {
-          fileData,
-          fileName: file.name,
-          assetType: target,
+
+    try {
+      const fileData = await optimizeImageIfNeeded(file);
+      const res = await uploadBrandingAsset(token, {
+        fileData,
+        fileName: file.name,
+        assetType: target,
+      });
+
+      const storageTypeLabel = res.storageProvider === 'supabase' ? 'Supabase Cloud Storage' : 'Server Storage';
+      showToast(`Uploaded ${target} image to ${storageTypeLabel}. Click "Publish" to make live.`);
+
+      if (data) {
+        setData({
+          ...data,
+          draft: res.draft,
+          isBadgeDirty: target === 'badge' ? true : data.isBadgeDirty,
+          isBannerDirty: target === 'banner' ? true : data.isBannerDirty,
+          hasUnpublishedChanges: true,
         });
-        showToast(`Uploaded ${target} image successfully.`);
-        if (data) {
-          setData({
-            ...data,
-            draft: res.draft,
-            isBadgeDirty: target === 'badge' ? true : data.isBadgeDirty,
-            isBannerDirty: target === 'banner' ? true : data.isBannerDirty,
-            hasUnpublishedChanges: true,
-          });
-        }
-      } catch (err: any) {
-        setUploadError(err.message || 'Upload failed');
-      } finally {
-        setUploadingTarget(null);
       }
-    };
-    reader.onerror = () => {
+      loadDiagnostics(token);
+    } catch (err: any) {
+      setUploadError(err.message || 'Image upload failed. Please try again.');
+    } finally {
       setUploadingTarget(null);
-      setUploadError('Failed to read file from disk.');
-    };
-    reader.readAsDataURL(file);
+      // Reset input value so re-selecting same file triggers change
+      if (e.target) e.target.value = '';
+    }
   };
 
   // Update draft patch
@@ -210,8 +307,11 @@ export const AdminBranding: React.FC = () => {
     if (!token) return;
     try {
       const res = await publishBranding(token, target);
-      showToast(res.message);
-      if (token) loadDraft(token);
+      showToast(res.message || 'Published to live site successfully.');
+      if (token) {
+        loadDraft(token);
+        loadDiagnostics(token);
+      }
     } catch (err: any) {
       showToast('Publish failed: ' + err.message);
     }
@@ -259,6 +359,12 @@ export const AdminBranding: React.FC = () => {
         }
       },
     });
+  };
+
+  const handleCopySql = () => {
+    navigator.clipboard.writeText(SQL_SCHEMA_SNIPPET);
+    setCopySuccess(true);
+    setTimeout(() => setCopySuccess(false), 2500);
   };
 
   // Construct draft preview object
@@ -331,18 +437,25 @@ export const AdminBranding: React.FC = () => {
             </div>
 
             {loginError && (
-              <div className="p-3 rounded-full bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 shrink-0" />
-                <span>{loginError}</span>
+              <div className="p-3.5 rounded-[18px] bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-start gap-2.5">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span className="leading-relaxed">{loginError}</span>
               </div>
             )}
 
             <button
               type="submit"
               disabled={isLoggingIn || !passwordInput.trim()}
-              className="w-full py-2.5 px-4 rounded-full text-sm font-bold bg-[#00E4FF] hover:bg-white text-[#000611] transition-all shadow-[0_0_15px_rgba(0,228,255,0.35)] disabled:opacity-50"
+              className="w-full py-2.5 px-4 rounded-full text-sm font-bold bg-[#00E4FF] hover:bg-white text-[#000611] transition-all shadow-[0_0_15px_rgba(0,228,255,0.35)] disabled:opacity-50 flex items-center justify-center gap-2"
             >
-              {isLoggingIn ? 'Authenticating...' : 'Authenticate & Access Branding'}
+              {isLoggingIn ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-[#000611] border-t-transparent rounded-full animate-spin" />
+                  <span>Authenticating...</span>
+                </>
+              ) : (
+                <span>Authenticate & Access Branding</span>
+              )}
             </button>
           </form>
 
@@ -384,22 +497,52 @@ export const AdminBranding: React.FC = () => {
               <ArrowLeft className="w-4 h-4" />
             </Link>
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <h1 className="text-base sm:text-lg font-bold text-[#F5F9FA]">
                   Owner Branding Center
                 </h1>
                 <span className="text-[10px] uppercase font-bold px-2.5 py-0.5 rounded-full bg-[#00E4FF]/10 text-[#00E4FF] border border-[#00E4FF]/30">
                   Owner Authenticated
                 </span>
+
+                {/* Cloud Storage Status Pill */}
+                {diagnostics?.storageProvider === 'supabase' ? (
+                  <button
+                    onClick={() => setShowDiagnosticsModal(true)}
+                    className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center gap-1.5 hover:bg-emerald-500/20 transition-colors"
+                    title="Supabase Cloud Storage is active and permanent"
+                  >
+                    <Cloud className="w-3 h-3 text-emerald-400" />
+                    <span>Supabase Cloud Active</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => setShowDiagnosticsModal(true)}
+                    className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-400/10 text-amber-300 border border-amber-400/30 flex items-center gap-1.5 hover:bg-amber-400/20 transition-colors"
+                    title="Using local storage. Click to view Vercel Supabase setup"
+                  >
+                    <AlertCircle className="w-3 h-3 text-amber-300" />
+                    <span>Local Mode (Setup Supabase)</span>
+                  </button>
+                )}
               </div>
               <p className="text-xs text-[#8CA0A8]">
-                Centralized shared branding for all public visitors across devices
+                Centralized shared branding for all public visitors across devices and deployments
               </p>
             </div>
           </div>
 
           {/* Master Actions */}
           <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-end">
+            <button
+              onClick={() => setShowDiagnosticsModal(true)}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-semibold text-[#8CA0A8] hover:text-[#00E4FF] hover:bg-[#156876]/30 border border-[#156876]/50 transition-colors"
+              title="Inspect Storage Provider & Vercel Configuration"
+            >
+              <Settings className="w-3.5 h-3.5" />
+              <span>Diagnostics</span>
+            </button>
+
             {data?.hasUnpublishedChanges && (
               <button
                 onClick={() => handlePublish('all')}
@@ -918,16 +1061,155 @@ export const AdminBranding: React.FC = () => {
             <span>Architecture & Deployment Notes</span>
           </div>
           <p className="leading-relaxed">
-            • <strong>Shared Persistence:</strong> Published branding configurations and uploaded assets are stored centrally on the server (<code className="text-[#00E4FF] font-mono">/data/branding.json</code> and <code className="text-[#00E4FF] font-mono">/data/uploads/</code>), ensuring all visitors see the identical published branding across all devices without depending on individual browser storage.
+            • <strong>Shared Persistence:</strong> Uploaded images are stored in persistent cloud storage (Supabase Storage) and referenced via permanent URLs in the database. All visitors across browsers, devices, and Vercel deployments immediately see the identical published branding.
           </p>
           <p className="leading-relaxed">
-            • <strong>Independent Fallbacks:</strong> Updating, replacing, or restoring the Studio Badge or Full Header Banner to its default branded state operates independently and will never alter the other asset.
+            • <strong>Independent Fallbacks:</strong> Updating, replacing, or restoring the Studio Badge or Full Header Banner operates independently and will never alter the other asset.
           </p>
           <p className="leading-relaxed">
-            • <strong>Owner Credentials:</strong> Configure <code className="text-[#00E4FF] font-mono">ADMIN_PASSWORD</code> in your environment variables for production deployments. External cloud storage (e.g. Supabase Storage) can be optionally enabled using the documented environment variables in <code className="text-[#00E4FF] font-mono">.env.example</code>.
+            • <strong>Vercel Serverless Integration:</strong> The API runs via Vercel Serverless Functions (<code className="text-[#00E4FF] font-mono">/api</code>). Ensure your environment variables are set in Vercel Project Settings → Environment Variables.
           </p>
         </section>
       </main>
+
+      {/* Cloud Storage & Vercel Diagnostics Modal */}
+      {showDiagnosticsModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#000611]/85 backdrop-blur-sm animate-in fade-in">
+          <div className="w-full max-w-2xl bg-[#081a24] border border-[#156876] rounded-[28px] p-6 shadow-2xl space-y-5 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-[#156876]/40">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-full bg-[#156876]/40 text-[#00E4FF]">
+                  <Cloud className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-[#F5F9FA]">Cloud Storage & Database Diagnostics</h3>
+                  <p className="text-xs text-[#8CA0A8]">Permanent branding persistence status across Vercel deployments</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowDiagnosticsModal(false)}
+                className="p-1.5 rounded-full hover:bg-[#156876]/40 text-[#8CA0A8] hover:text-[#F5F9FA] transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Storage Provider Status Card */}
+            <div className="p-4 rounded-[20px] bg-[#000611] border border-[#156876]/60 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Database className="w-4 h-4 text-[#00E4FF]" />
+                  <span className="text-xs font-bold text-[#F5F9FA]">Active Storage Engine</span>
+                </div>
+                {diagnostics?.storageProvider === 'supabase' ? (
+                  <span className="text-xs font-bold text-emerald-400 bg-emerald-500/10 px-3 py-1 rounded-full border border-emerald-500/30 flex items-center gap-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    Supabase Cloud Active
+                  </span>
+                ) : (
+                  <span className="text-xs font-bold text-amber-300 bg-amber-400/10 px-3 py-1 rounded-full border border-amber-400/30 flex items-center gap-1.5">
+                    <AlertCircle className="w-3.5 h-3.5" />
+                    Local Storage Fallback
+                  </span>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs pt-1">
+                <div className="p-2.5 rounded-[14px] bg-[#081a24] border border-[#156876]/30">
+                  <span className="text-[11px] text-[#8CA0A8] block">Supabase Storage Bucket:</span>
+                  <span className="font-mono text-[#00E4FF] font-semibold">{diagnostics?.supabaseBucket || 'branding-assets'}</span>
+                </div>
+                <div className="p-2.5 rounded-[14px] bg-[#081a24] border border-[#156876]/30">
+                  <span className="text-[11px] text-[#8CA0A8] block">Database Table:</span>
+                  <span className="font-mono text-[#00E4FF] font-semibold">
+                    {diagnostics?.tableReady ? 'curecraft_branding (Connected)' : 'curecraft_branding (Ready / Storage Sync)'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Vercel Environment Checklist */}
+            <div className="space-y-2">
+              <h4 className="text-xs font-bold text-[#8CA0A8] uppercase tracking-wider flex items-center gap-2">
+                <Server className="w-3.5 h-3.5 text-[#00E4FF]" />
+                Vercel Project Settings → Environment Variables Checklist
+              </h4>
+              <div className="bg-[#000611] rounded-[20px] p-4 border border-[#156876]/50 space-y-2 text-xs">
+                <div className="flex items-center justify-between py-1 border-b border-[#156876]/30">
+                  <span className="font-mono text-[#F5F9FA]">SUPABASE_URL</span>
+                  {diagnostics?.envChecklist.SUPABASE_URL ? (
+                    <span className="text-emerald-400 flex items-center gap-1 text-[11px] font-semibold">
+                      <Check className="w-3.5 h-3.5" /> Configured
+                    </span>
+                  ) : (
+                    <span className="text-amber-400 text-[11px] font-semibold">Missing (Add in Vercel)</span>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-between py-1 border-b border-[#156876]/30">
+                  <span className="font-mono text-[#F5F9FA]">SUPABASE_SERVICE_ROLE_KEY</span>
+                  {diagnostics?.envChecklist.SUPABASE_KEY ? (
+                    <span className="text-emerald-400 flex items-center gap-1 text-[11px] font-semibold">
+                      <Check className="w-3.5 h-3.5" /> Configured
+                    </span>
+                  ) : (
+                    <span className="text-amber-400 text-[11px] font-semibold">Missing (Add in Vercel)</span>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-between py-1">
+                  <span className="font-mono text-[#F5F9FA]">ADMIN_PASSWORD</span>
+                  {diagnostics?.envChecklist.ADMIN_PASSWORD ? (
+                    <span className="text-emerald-400 flex items-center gap-1 text-[11px] font-semibold">
+                      <Check className="w-3.5 h-3.5" /> Custom Set
+                    </span>
+                  ) : (
+                    <span className="text-[#8CA0A8] text-[11px]">Using default (curecraft-admin-2025)</span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* SQL Table Creation Snippet */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-[#8CA0A8] uppercase tracking-wider">
+                  Optional: Supabase SQL Migration Script
+                </span>
+                <button
+                  onClick={handleCopySql}
+                  className="text-xs text-[#00E4FF] hover:text-white flex items-center gap-1 px-2.5 py-1 rounded-full bg-[#156876]/40 hover:bg-[#156876] transition-colors"
+                >
+                  {copySuccess ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{copySuccess ? 'Copied SQL!' : 'Copy SQL'}</span>
+                </button>
+              </div>
+              <pre className="p-3 bg-[#000611] border border-[#156876]/40 rounded-[18px] text-[11px] font-mono text-[#8CA0A8] overflow-x-auto select-all">
+                {SQL_SCHEMA_SNIPPET}
+              </pre>
+            </div>
+
+            <div className="pt-2 flex justify-between items-center border-t border-[#156876]/30">
+              <button
+                onClick={() => {
+                  if (token) loadDiagnostics(token);
+                }}
+                className="px-3.5 py-2 rounded-full text-xs font-semibold text-[#8CA0A8] hover:text-[#00E4FF] hover:bg-[#156876]/30 transition-colors flex items-center gap-1.5"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Recheck Connection</span>
+              </button>
+
+              <button
+                onClick={() => setShowDiagnosticsModal(false)}
+                className="px-5 py-2 rounded-full text-xs font-bold bg-[#00E4FF] text-[#000611] hover:bg-white transition-all"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {confirmDialog && (
         <ConfirmModal
