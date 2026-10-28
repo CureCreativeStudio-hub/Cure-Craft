@@ -1,0 +1,8 @@
+{
+  "name": "Remix Cure Craft — Professional Image Prompt Builder",
+  "description": "A precision image-prompt-building workspace for designers and creative directors who want meticulous control over every visual detail.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

@@ -1,0 +1,64 @@
+@import "tailwindcss";
+
+@theme {
+  --color-cure-midnight: #000611;
+  --color-cure-deepteal: #156876;
+  --color-cure-teal: #438D96;
+  --color-cure-cyan: #00E4FF;
+  --color-cure-white: #F5F9FA;
+  --color-cure-muted: #8CA0A8;
+  --font-sans: 'Baloo 2', 'Baloo', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  background-color: #000611;
+  color: #F5F9FA;
+  font-family: var(--font-sans);
+  overflow-x: hidden;
+  min-height: 100vh;
+}
+
+/* Custom scrollbars with pill-rounded thumb */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+::-webkit-scrollbar-track {
+  background: #000611;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #156876;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #438D96;
+}
+
+/* Restrained cyan & teal studio glows */
+.glow-cyan {
+  box-shadow: 0 0 20px rgba(0, 228, 255, 0.35);
+}
+
+.glow-cyan-sm {
+  box-shadow: 0 0 10px rgba(0, 228, 255, 0.3);
+}
+
+.glow-teal {
+  box-shadow: 0 0 20px rgba(67, 141, 150, 0.35);
+}
+
+.glow-border-cyan {
+  box-shadow: 0 0 0 1px rgba(0, 228, 255, 0.6), 0 0 14px rgba(0, 228, 255, 0.25);
+}
+
+.horizon-glow {
+  box-shadow: 0 0 16px #00E4FF, 0 1px 4px rgba(67, 141, 150, 0.8);
+}
